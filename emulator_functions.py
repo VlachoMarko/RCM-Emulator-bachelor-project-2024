@@ -25,20 +25,21 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 import glob 
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from pandas import to_datetime
 from astropy.io import ascii
 from math import cos,sin,pi
 from typing import overload,List  
-from lambertools import matchLambert 
+# from lambertools import matchLambert 
 from math import log2,pow
 import os
 import random as rn
 
 
 import tensorflow as tf
+
 from tensorflow.keras import backend as K
-from tensorflow.compat.v1.keras.backend import set_session
+# from tensorflow.compat.v1.keras.backend import set_session
 
 #To be activated only if GPU available
 #physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -308,9 +309,13 @@ class wrapModel:
              filepath_gamma_param=None,
              batch_size=32,LR=0.005):
     
-        if os.path.isfile(filepath_model) :
-            print ( 'Model already trained.')
-            return None 
+
+        # TODO: The code needs a .h5 file to put the model in however this code stops execution
+        #       in case there is a file, which is a contradiction.
+        #
+        # if os.path.isfile(filepath_model) :
+        #     print ( 'Model already trained.')
+        #     return None 
 
         full_input=[np.concatenate(input2D,axis=0),np.concatenate(input1D,axis=0)]
         full_target=np.concatenate(targetIn ,axis=0)
@@ -352,7 +357,7 @@ class wrapModel:
         # sftlf = matchLambert(grid_ds, sftlf_ds, 4)   
         
         
-        grid_ds    = xr.open_dataset(filepath_grid)     
+        grid_ds    = xr.open_dataset(filepath_grid, engine="h5netcdf")     
         unet=self.unet_maker(nb_inputs=len(dataset_tr.element_spec[0]),
                             size_target_domain=dataset_tr.element_spec[1].shape[1],
                             shape_inputs=[tuple(dataset_tr.element_spec[0][A].shape[1:]) for A in dataset_tr.element_spec[0]],
@@ -394,37 +399,36 @@ class wrapModel:
 class Predictors:
     #make the predictors following a set of parameters to define 
     def __init__(self,
-                 var_list=[None],                 # List of predictors (2D)
                  domain: str,                     # output domain name, must be defined in the class Domain
-                 domain_size,                     # size of the input domain, can be integer or tuple, must be define in the class domain. 
+                 domain_size,                     # size of the input domain, can be integer or tuple, must be define in the class domain.  
+                 var_list=[None],                 # List of predictors (2D)
                  filepath=None,                   # path to the input file, must be a .nc file containing all 2D variables used as predictors (except aerosols) 
                  filepath_ref=None,               # path to the file used to normalize the inputs, must be similar to 'filepath'
                  stand=1,                         # way to standardize the data, see strandardize functions upper
                  ref_period=['1971','2000'],      # reference periode to use for normalisation
-                 means='s',stds='s',              # If stand = 1, to include or not ('n') the means and standard deviation
+                 means='r',stds='r',              # If stand = 1, to include or not ('n') the means and standard deviation
                  aero_ext=False,                  # Bool, to be True if aerosols variable is not in the input file 
                  filepath_aero=None,              # path to aerosol files (only if not in the input file)
                  aero_stdz=False,                 # Bool, to normalise or not the inputs
-                 aero_var='aero'                  # name of aero variable in filepath_aero
+                 aero_var='aero',                  # name of aero variable in filepath_aero
                  filepath_forc=None,              # path to the .csv file containing external forcings (GHG, solar, ozone...)
                  opt_ghg='ONE',                   # Option for the ghg, each comoponent (CO2, CH4....) seperately ('MULTI') or concatenated ('ONE') in C02 equivalent. 
                  seas=True                       # Bool, to include or not a cosine&sine vector for the season
-                ):
-
+    ):    
         self.domain=Domain(domain, domain_size)
         with tf.device("/cpu:0"):
-             self.input2D, self.input1D, self.timeout = self.make(filepath, 
-                                                                  filepath_ref,
-                                                                  stand,
-                                                                  var_list,
-                                                                  ref_period,
-                                                                  filepath_aero=filepath_aero,
-                                                                  aero_var=aero_var,
-                                                                  aero_stdz=aero_stdz, aero_ext=aero_ext,   
-                                                                  filepath_forc=filepath_forc,
-                                                                  opt_ghg=opt_ghg,
-                                                                  means=means,stds=stds,
-                                                                  seas=seas) 
+            self.input2D, self.input1D, self.timeout = self.make(filepath, 
+                                                                filepath_ref,
+                                                                stand,
+                                                                var_list,
+                                                                ref_period,
+                                                                filepath_aero=filepath_aero,
+                                                                aero_var=aero_var,
+                                                                aero_stdz=aero_stdz, aero_ext=aero_ext,   
+                                                                filepath_forc=filepath_forc,
+                                                                opt_ghg=opt_ghg,
+                                                                means=means,stds=stds,
+                                                                seas=seas) 
 
     def make(self, filepath, filepath_ref, stand, var_list,ref_period,
              aero_ext=None,filepath_aero=None,aero_stdz=None,aero_var=None,
@@ -617,6 +621,9 @@ class Domain:
     def __repr__(self):
         return f"[Domain object :lon_b {self.lon_b}, lon_e {self.lon_e}, lat_b {self.lat_b}, lat_e {self.lat_e}]" 
     def domainLims(self, domain: str, size):
+        
+        print("domainlims: %s \n", domain)
+
         if domain == 'MBP' :
             if size == 8:
                 self.setLims(-3,8,37,47)
@@ -646,6 +653,8 @@ class Domain:
             if size==8:
                 self.setLims(50,61,-25,-14) 
     def setLims(self,lon_b,lon_e,lat_b,lat_e):
+
+        print("setLims \n")
         self.lon_b = lon_b
         self.lon_e = lon_e
         self.lat_b = lat_b
