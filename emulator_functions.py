@@ -30,6 +30,7 @@ from pandas import to_datetime
 from astropy.io import ascii
 from math import cos,sin,pi
 from typing import overload,List  
+
 # from lambertools import matchLambert 
 from math import log2,pow
 import os
@@ -309,10 +310,10 @@ class wrapModel:
              filepath_gamma_param=None,
              batch_size=32,LR=0.005):
     
-
-        # TODO: The code needs a .h5 file to put the model in however this code stops execution
-        #       in case there is a file, which is a contradiction.
-        #
+       
+        #    The code needs a .keras/.h5 file to put the model in however this if statement stops execution
+        #    of the program in case a file like this exists, which seems like a contradiction.
+        
         # if os.path.isfile(filepath_model) :
         #     print ( 'Model already trained.')
         #     return None 
@@ -353,7 +354,6 @@ class wrapModel:
         del full_input_train, full_target_train, full_input_test, full_target_test
         
         # sftlf_ds = xr.open_dataset(filepath_sftlf)
-
         # sftlf = matchLambert(grid_ds, sftlf_ds, 4)   
         
         
@@ -365,7 +365,8 @@ class wrapModel:
 
         unet.summary()
         
-        LR, epochs = LR, 100
+        # LR, epochs = LR, 100
+        epochs = 1
         
         if target_var=='pr':
             gamma_param=xr.open_dataset(filepath_gamma_param).sel(x=grid_ds.x,y=grid_ds.y)
@@ -380,7 +381,7 @@ class wrapModel:
         callbacks = [ReduceLROnPlateau(monitor='val_loss', factor=0.7, patience=4, verbose=1), EarlyStopping(monitor='val_loss', patience=15, verbose=1),
                  ModelCheckpoint(filepath_model, monitor='val_loss', verbose=1, save_best_only=True)]
         
-        unet.compile(optimizer=Adam(lr=LR), loss=l, metrics=[tf.metrics.RootMeanSquaredError()])   
+        unet.compile(optimizer=Adam(learning_rate=LR), loss=l, metrics=[tf.metrics.RootMeanSquaredError()])   
         
         tf.config.run_functions_eagerly(True)
                               
@@ -592,15 +593,16 @@ class Target:
         print("Initializing Lambert grid, this may (and should) fail for other grid types") 
         if filepath_grid:
             grid=xr.open_dataset(filepath_grid)
-            ds = xr.open_dataset(filepath).sel(x=grid.x,y=grid.y)
+            ds = xr.open_dataset(filepath)
+            # .sel(x=grid.x,y=grid.y)
         else:
             ds = xr.open_dataset(filepath)
             grid=ds
         self.target = ds[target_var].sel(time=~((ds.time.dt.month==2) & (ds.time.dt.day==29)))
         self.lat = grid['lat']   
         self.lon = grid['lon'] 
-        self.y   = grid['y']
-        self.x   = grid['x'] 
+        # self.y   = grid['y']
+        # self.x   = grid['x'] 
         ds.close()
 
 
@@ -610,8 +612,8 @@ class Grid:
         ds = xr.open_dataset(filepath)
         self.lat = ds['lat']   
         self.lon = ds['lon'] 
-        self.y   = ds['y']
-        self.x   = ds['x'] 
+        # self.y   = ds['y']
+        # self.x   = ds['x'] 
         ds.close()
 
 

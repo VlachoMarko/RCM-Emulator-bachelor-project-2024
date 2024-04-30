@@ -9,7 +9,6 @@ Created on Wed Mar  6 11:46:07 2024
 import sys
 import numpy as np
 import xarray as xr
-# sys.path.append('/home/rossz/VU/BSC_project/RCM-Emulator')
 from emulator_functions import Predictors,Pred,Target,wrapModel,Domain  
 from emulator_functions import launch_gpu
 from collections import UserDict
@@ -41,7 +40,7 @@ namelist_in_1 = UserDict({
 'opt_ghg' : 'ONE', 
 'filepath_forc' : '/home/vmarko/VU/BSC_project/RCM-Emulator/GHG_RCP85_withONE.csv',
 'filepath_grid' : '/home/vmarko/VU/BSC_project/RCM-Emulator/X_EUC12_fullvar_smth3_aero_2000-01-01.nc',
-'filepath_model' : '/home/vmarko/VU/BSC_project/RCM-Emulator/grid_info.nc',
+'filepath_model' : '/home/vmarko/VU/BSC_project/RCM-Emulator/outputmodel.keras',
 'filepath_target': '/home/vmarko/VU/BSC_project/RCM-Emulator/X_EUC12_fullvar_smth3_aero_2000-01-01.nc'
 })
 
@@ -61,7 +60,6 @@ namelist_in_1 = UserDict({
 # 'filepath_model' : 'path to save the model, format can be .h5 or .keras',
 # 'filepath_target': 'path to target file (high resolution, inluding target domain and target variable)'
 # })
-
 
 for key in namelist_in_1: 
     setattr(namelist_in_1,key,namelist_in_1[key]) 
