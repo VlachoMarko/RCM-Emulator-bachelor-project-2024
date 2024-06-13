@@ -6,12 +6,11 @@ Created on Thu Mar 14 15:28:58 2024
 @author: dourya
 """
 
-import sys
+# import sys
 import numpy as np
 import xarray as xr
-sys.path.append('/cnrm/mosca/USERS/dourya/scripts/python/NN/GITHUB')
-from emu_funs import Predictors,Pred,Target,wrapModel,Domain  
-from emu_funs import launch_gpu
+from emulator_functions import Predictors,Pred,Target,wrapModel  
+from emulator_functions import launch_gpu
 from collections import UserDict
 from datetime import date
 
@@ -43,7 +42,7 @@ namelist_out = UserDict({
     'opt_ghg' : 'ONE', 
     'filepath_forc' : 'path to correspong external forcings',
     'filepath_grid' : 'path to output domain grid',
-    'filepath_model' : 'pathto emulator trained'   ,
+    'filepath_model' : 'path to emulator trained'   ,
     'filepath_aero':'path to corresponding aerosols file',
     'aero_ext':True,'aero_stdz':True,'aero_var':'od550aer',
     'filepath_out':'path to save the output file'+filename,

@@ -9,7 +9,7 @@ Created on Wed Mar  6 11:46:07 2024
 import sys
 import numpy as np
 import xarray as xr
-from emulator_functions import Predictors,Pred,Target,wrapModel,Domain  
+from emulator_functions import Predictors,Pred,Target,wrapModel  
 from emulator_functions import launch_gpu
 from collections import UserDict
 
@@ -17,55 +17,56 @@ from collections import UserDict
 # Please modify the following namelist with the values corresponding to 
 # your emulator.  
 
-# launch_gpu(2)
+launch_gpu(0)
 
+var0_nosfc1 = ['z0300','z0500',
+           't0850','t0300','t0500',
+           'rh0850','rh0700','rh0500',
+           'u0300','u0500',
+           'v0500','v0300']
 
-var0_nosfc1 = ['zg850','zg700','zg500',
-           'ta850','ta700','ta500',
-           'hus850','hus700','hus500',
-           'ua850','ua700','ua500',
-           'va850','va700','va500']
 
 ## The idea is to create 1 object predictor for each simulation to put in the training set
 
 namelist_in_1 = UserDict({ 
-'target_var':'tas',
-'domain':'ALP', 
-'domain_size':(22,16), 
-'filepath_in': '/home/vmarko/VU/BSC_project/RCM-Emulator/X_EUC12_fullvar_smth3_aero_2000-01-01.nc', 
-'filepath_ref': '/home/vmarko/VU/BSC_project/RCM-Emulator/X_EUC12_fullvar_smth3_aero_2000-01-01.nc',
-'aero_ext':False,'aero_stdz':False,'aero_var':'aero',
-'filepath_aero':'path to corresponding aerosol file (must be daily)',
-'var_list' : var0_nosfc1, 
-'opt_ghg' : 'ONE', 
-'filepath_forc' : '/home/vmarko/VU/BSC_project/RCM-Emulator/GHG_RCP85_withONE.csv',
-'filepath_grid' : '/home/vmarko/VU/BSC_project/RCM-Emulator/X_EUC12_fullvar_smth3_aero_2000-01-01.nc',
-'filepath_model' : '/home/vmarko/VU/BSC_project/RCM-Emulator/outputmodel.keras',
-'filepath_target': '/home/vmarko/VU/BSC_project/RCM-Emulator/X_EUC12_fullvar_smth3_aero_2000-01-01.nc'
+    'target_var':'precip',
+    'domain':'ST', 
+    #'domain_size':(-1,-1), 
+    'filepath_in': '/mnt/d/RACMO/HIST/1degree-nopress-nobnds-remapnn-somevariables-fullgreenland.KNMI-1959-1964.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc', 
+    # 'filepath_in': '/mnt/d/RACMO/HIST/1degree-nobnds-remapnn-somevariables-fullgreenland.KNMI-1950-2014.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc', 
+    'filepath_ref': '/mnt/d/RACMO/HIST/1degree-ref-nopress-nobnds-remapnn-somevariables-fullgreenland.KNMI-1960-1962.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc',
+    'aero_ext':False,'aero_stdz':False,'aero_var':'aero',
+    'filepath_aero':'',
+    'var_list' : var0_nosfc1, 
+    'opt_ghg' : 'ONE', 
+    'filepath_forc' : '',
+    'filepath_grid' : '/mnt/d/RACMO/HIST/precip-detailed-res-sgreenland.KNMI-1959-1964.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc',
+    'filepath_model' : '/home/vmarko/VU/BSC_project/RCM-Emulator/outputmodel.keras',
+    'filepath_target': '/mnt/d/RACMO/HIST/precip-detailed-res-sgreenland.KNMI-1959-1964.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc'
 })
 
 
 # namelist_in_1 = UserDict({ 
-# 'target_var':'tas',
-# 'domain':'ALP', 
-# 'domain_size':(20,16), 
-# 'filepath_in': 'path to inputs', 
-# 'filepath_ref': 'path to reference file, should be similar to input file, must be the same for any predictor set',
-# 'aero_ext':True,'aero_stdz':False,'aero_var':'aero',
-# 'filepath_aero':'path to corresponding aerosol file (must be daily)',
-# 'var_list' : var0_nosfc1, 
-# 'opt_ghg' : 'ONE', 
-# 'filepath_forc' : 'path to corresponding .csv including ghg, see example file',
-# 'filepath_grid' : 'path to a .nc with output grid information, can be extracted from target file',
-# 'filepath_model' : 'path to save the model, format can be .h5 or .keras',
-# 'filepath_target': 'path to target file (high resolution, inluding target domain and target variable)'
+    # 'target_var':'tas',
+    # 'domain':'ALP', 
+    # 'domain_size':(20,16), 
+    # 'filepath_in': 'path to inputs', -> one .nc file during a time period with all the variables 
+    # 'filepath_ref': 'path to reference file, should be similar to input file, must be the same for any predictor set',
+    # 'aero_ext':True,'aero_stdz':False,'aero_var':'aero',
+    # 'filepath_aero':'path to corresponding aerosol file (must be daily)',
+    # 'var_list' : var0_nosfc1, 
+    # 'opt_ghg' : 'ONE', 
+    # 'filepath_forc' : 'path to corresponding .csv including ghg, see example file',
+    # 'filepath_grid' : 'path to a .nc with output grid information, can be extracted from target file',
+    # 'filepath_model' : 'path to save the model, format can be .h5 or .keras',
+    # 'filepath_target': 'path to target file (high resolution, including target domain and target variable)'
 # })
 
 for key in namelist_in_1: 
     setattr(namelist_in_1,key,namelist_in_1[key]) 
 
 input_1 = Predictors(namelist_in_1.domain,
-                     namelist_in_1.domain_size,
+                     # namelist_in_1.domain_size,
                     filepath=namelist_in_1.filepath_in,
                     filepath_ref=namelist_in_1.filepath_ref,
                     var_list=namelist_in_1.var_list,

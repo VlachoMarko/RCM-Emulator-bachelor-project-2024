@@ -22,29 +22,31 @@ Pred : to make the prediction.
 
 import sys
 import xarray as xr
-import pandas as pd
+# import pandas as pd
 import numpy as np
-import glob 
-import matplotlib.pyplot as plt
-from pandas import to_datetime
-from astropy.io import ascii
+# import glob 
+# import matplotlib.pyplot as plt
+# import dask.array as da
+# from pandas import to_datetime
+# from astropy.io import ascii
 from math import cos,sin,pi
-from typing import overload,List  
+# from typing import overload,List  
+# from cftime import DatetimeNoLeap,num2date
+
 
 # from lambertools import matchLambert 
 from math import log2,pow
-import os
+# import os
 import random as rn
 
 
 import tensorflow as tf
-
 from tensorflow.keras import backend as K
 # from tensorflow.compat.v1.keras.backend import set_session
 
 #To be activated only if GPU available
-#physical_devices = tf.config.experimental.list_physical_devices('GPU')
-#tf.config.experimental.set_memory_growth(physical_devices[0], True)
+physical_devices = tf.config.experimental.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 from tensorflow.keras.models import load_model, Model
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, UpSampling2D, Conv2DTranspose, Reshape, concatenate, BatchNormalization, Activation
@@ -109,18 +111,16 @@ def block_up(conv, filters):
     conv = block_conv(conv, filters)
     return conv
 
-
 def highestPowerof2(n):
-    res = 0;
+    res = 0
     for i in range(n, 0, -1):
 
         # If i is a power of 2
         if ((i & (i - 1)) == 0):
+            res = i
+            break
 
-            res = i;
-            break;
-
-    return res;
+    return res
 
 def wmae_gb_glob_quant(alpha,pbeta,quant):  # loss function fro precipitation emulator
     def wmae_gb(y_true,y_pred):
@@ -142,7 +142,6 @@ class Pred:
                  target_var='tas', # variable to emulate 
                  attributes=None #list of attributes to pass to the output file
                 ):
-        self.domain = Domain(domain, domain_size) 
         self.targetGrid = Grid(filepath_grid) 
 
         # Create a prediction for the inputs passed in inputIn for the model passed in 'filepath_model'
@@ -311,8 +310,8 @@ class wrapModel:
              batch_size=32,LR=0.005):
     
        
-        #    The code needs a .keras/.h5 file to put the model in however this if statement stops execution
-        #    of the program in case a file like this exists, which seems like a contradiction.
+        # MV:   The following code needs an empty .keras/.h5 file to put the model in, however this if statement stops 
+        #       execution of the program in case a file like this exists, which seems like a contradiction. 
         
         # if os.path.isfile(filepath_model) :
         #     print ( 'Model already trained.')
@@ -330,6 +329,7 @@ class wrapModel:
         print(full_target.shape) 
         print(full_input[0].shape)
         print(full_input[1].shape)
+        
         rn.seed(123)
                
         idx_train=rn.sample(range(full_target.shape[0]), int(0.8*full_target.shape[0]))
@@ -341,8 +341,7 @@ class wrapModel:
         print(full_input_train[1].shape)
         print(full_target_train[:,:,:,None].shape)
         
-        del full_input, full_target
-    
+        del full_input, full_target    
     
         dataset_tr = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_train[0], 
                                                            "input_2": full_input_train[1]},
@@ -357,15 +356,13 @@ class wrapModel:
         # sftlf = matchLambert(grid_ds, sftlf_ds, 4)   
         
         
-        grid_ds    = xr.open_dataset(filepath_grid, engine="h5netcdf")     
+        grid_ds    = xr.open_dataset(filepath_grid, engine="netcdf4")     
         unet=self.unet_maker(nb_inputs=len(dataset_tr.element_spec[0]),
                             size_target_domain=dataset_tr.element_spec[1].shape[1],
                             shape_inputs=[tuple(dataset_tr.element_spec[0][A].shape[1:]) for A in dataset_tr.element_spec[0]],
                             filters = 64)
 
         unet.summary()
-        
-        # LR, epochs = LR, 100
         epochs = 1
         
         if target_var=='pr':
@@ -375,16 +372,15 @@ class wrapModel:
             lvl=tf.zeros_like(alpha)+1
             l=wmae_gb_glob_quant(alpha,beta,lvl)
         else:
-            l='mse'
+            l = 'mse'
         
         print(l)
-        callbacks = [ReduceLROnPlateau(monitor='val_loss', factor=0.7, patience=4, verbose=1), EarlyStopping(monitor='val_loss', patience=15, verbose=1),
-                 ModelCheckpoint(filepath_model, monitor='val_loss', verbose=1, save_best_only=True)]
+        callbacks = [ReduceLROnPlateau(monitor='val_loss', factor=0.7, patience=4, verbose=1), EarlyStopping(monitor='val_loss', patience=15, verbose=1), ModelCheckpoint(filepath_model, monitor='val_loss', verbose=1, save_best_only=True)]
         
-        unet.compile(optimizer=Adam(learning_rate=LR), loss=l, metrics=[tf.metrics.RootMeanSquaredError()])   
+        unet.compile(optimizer=Adam(learning_rate=LR), loss=l, metrics=[tf.metrics.RootMeanSquaredError()])
         
         tf.config.run_functions_eagerly(True)
-                              
+        
       
         unet.fit(dataset_tr,
                 epochs=epochs,   
@@ -401,12 +397,12 @@ class Predictors:
     #make the predictors following a set of parameters to define 
     def __init__(self,
                  domain: str,                     # output domain name, must be defined in the class Domain
-                 domain_size,                     # size of the input domain, can be integer or tuple, must be define in the class domain.  
+                 # domain_size,                     # size of the input domain, can be integer or tuple, must be define in the class domain.  
                  var_list=[None],                 # List of predictors (2D)
                  filepath=None,                   # path to the input file, must be a .nc file containing all 2D variables used as predictors (except aerosols) 
                  filepath_ref=None,               # path to the file used to normalize the inputs, must be similar to 'filepath'
                  stand=1,                         # way to standardize the data, see strandardize functions upper
-                 ref_period=['1971','2000'],      # reference periode to use for normalisation
+                 ref_period=['1960','1962'],      # reference periode to use for normalisation
                  means='r',stds='r',              # If stand = 1, to include or not ('n') the means and standard deviation
                  aero_ext=False,                  # Bool, to be True if aerosols variable is not in the input file 
                  filepath_aero=None,              # path to aerosol files (only if not in the input file)
@@ -415,8 +411,7 @@ class Predictors:
                  filepath_forc=None,              # path to the .csv file containing external forcings (GHG, solar, ozone...)
                  opt_ghg='ONE',                   # Option for the ghg, each comoponent (CO2, CH4....) seperately ('MULTI') or concatenated ('ONE') in C02 equivalent. 
                  seas=True                       # Bool, to include or not a cosine&sine vector for the season
-    ):    
-        self.domain=Domain(domain, domain_size)
+    ):  
         with tf.device("/cpu:0"):
             self.input2D, self.input1D, self.timeout = self.make(filepath, 
                                                                 filepath_ref,
@@ -435,29 +430,21 @@ class Predictors:
              aero_ext=None,filepath_aero=None,aero_stdz=None,aero_var=None,
              filepath_forc=None,opt_ghg=None,
              means=None,stds=None,seas=None):
+        
+        DATASET = xr.open_dataset(filepath)
+        # DATASET_wleap = self.domain.applyDom(DATASET_wleap)
 
-        print(aero_ext)  
-        #Open the dataset, get data over selected domain and delete leaps  
-        DATASET_wleap = xr.open_dataset(filepath)
-        DATASET_wleap = self.domain.applyDom(DATASET_wleap)
-
-        DATASET = DATASET_wleap.sel(time=~((DATASET_wleap.time.dt.month==2) & (DATASET_wleap.time.dt.day==29)))
-
-        del DATASET_wleap
+        # DATASET = DATASET_wleap.sel(time=~((DATASET_wleap.time.dt.month==2) & (DATASET_wleap.time.dt.day==29)))
+        # del DATASET_wleap
 
         #Do the same thing for the reference dataset 
-        DATASET_ref_wleap = xr.open_dataset(filepath_ref)
-        DATASET_ref_wleap = self.domain.applyDom(DATASET_ref_wleap)
-
-        # Delete leap years for reference dataset comparison 
-        DATASET_ref = DATASET_ref_wleap.sel(time=~((DATASET_ref_wleap.time.dt.month==2) & (DATASET_ref_wleap.time.dt.day==29)))
-        DATASET_ref = DATASET_ref.sel(time=slice(ref_period[0],ref_period[1]))
+        DATASET_ref = xr.open_dataset(filepath_ref)
+        # DATASET_ref_wleap = self.domain.applyDom(DATASET_ref_wleap)
         
-        years=np.asarray([y for y in to_datetime(DATASET_ref['time'].values).year])
+        # years=np.asarray([y for y in to_datetime(DATASET_ref['time'].values).year])
         # Numpy where gives a 2 member tuple here composed of an array of indicies followed by a second empty value
         # b=np.where(years==ref_period[0])
         # e=np.where(years==ref_period[1]) 
-
 
         # Create an array with coordinates in order (time, y, x, variable)
         if 'tos' in var_list:
@@ -466,17 +453,16 @@ class Predictors:
         
         INPUT_2D=DATASET[var_list].to_array().values.transpose((1,2,3,0))
         REF_ARRAY=DATASET_ref[var_list].to_array().values.transpose((1,2,3,0))
-        
-        del DATASET_ref_wleap
+        # del DATASET_ref_wleap
 
- 
+        # MV: Normalization of 2D variables happens below in the "standardize" functions
+        
         if stand==1:
            INPUT_2D_SDTZ = standardize(INPUT_2D, "INPUT_2D")
         elif stand==2:
            INPUT_2D_SDTZ = standardize2(INPUT_2D,REF_ARRAY, "INPUT_2D")
 
         if aero_ext:
-            
             aero_dataset= xr.open_dataset(filepath_aero)
             aero_dataset=aero_dataset.sel(time=DATASET.time,method='pad')
             aero_dataset=aero_dataset.sel(lon=DATASET.lon,lat=DATASET.lat,method='nearest')[aero_var]
@@ -495,50 +481,13 @@ class Predictors:
         '''
         INPUT_1D=[]
 
-        # Load and treat ghg gasses 
-        yr_b=str(DATASET.time.dt.year.values[0])
-        yr_e=str(DATASET.time.dt.year.values[-1]+1)
-        if 'RCP' in filepath_forc :
-            forcings = pd.read_csv(filepath_forc)[:-300]
-        else:
-            forcings = pd.read_csv(filepath_forc)
-        forcings.index=pd.to_datetime(forcings['year'], format='%Y')
-        forcingsd=forcings.loc[yr_b:yr_e].resample('D').ffill()
-        forcingsd=forcingsd.loc[DATASET.time.dt.date]
-
-        forcings_ref = forcings.loc[ref_period[0]:ref_period[1]].resample('D').ffill()
-
-        if opt_ghg=='ONE': 
-            vect_ghg =np.reshape(forcingsd.GHG.values,(INPUT_2D.shape[0],1,1,1))
-        elif opt_ghg=='MULTI':
-            ghg_ref=forcings_ref[['CO2','CH4','N2O','CFC11','CFC12']]
- 
-            ghg_ref_mean=ghg_ref.mean()
-            ghg_ref_std=ghg_ref.std()
-
-            vect_ghg=np.reshape(((forcingsd[['CO2','CH4','N2O','CFC11','CFC12']] - ghg_ref_mean)/ghg_ref_std).values,(INPUT_2D.shape[0],1,1,5))
- 
-        INPUT_1D.append(vect_ghg) 
- 
-        # Treat solar forcing 
-        csol_ref=forcings_ref['solaire']
-        csol_ref_mean=csol_ref.mean()
-        csol_ref_std=csol_ref.std()
-        csol=(forcingsd['solaire'] - csol_ref_mean)/csol_ref_std
-    
-        INPUT_1D.append(csol.values.reshape(INPUT_2D.shape[0],1,1,1))
-
-        # Treat ozone forcing  
-        oz_ref=forcings_ref['chlore']
-        oz_ref_mean=oz_ref.mean(axis=0)
-        oz_ref_std=oz_ref.std(axis=0)
-        oz=(forcingsd['chlore'] - oz_ref_mean)/oz_ref_std
-    
-        INPUT_1D.append(oz.values.reshape(INPUT_2D.shape[0],1,1,1))
+        # INPUT_1D.append(oz.values.reshape(INPUT_2D.shape[0],1,1,1))
+        # INPUT_1D.append(oz.values.reshape(INPUT_2D.shape[0],1,1,1))
 
         vect_means = INPUT_2D.mean(axis=(1,2))
         vect_std = INPUT_2D.std(axis=(1,2))
-    
+
+        # MV: This if statement seems to not execute anything
         if means == 's' or stds == 's' :
             '''
             COMPUTE MEANS
@@ -590,78 +539,55 @@ class Target:
                  filepath=None,         # path to a file containing the output variable on a domain including the output domain
                  filepath_grid=None     # path to a file containing the output file grid
                 ):
-        print("Initializing Lambert grid, this may (and should) fail for other grid types") 
         if filepath_grid:
             grid=xr.open_dataset(filepath_grid)
             ds = xr.open_dataset(filepath)
-            # .sel(x=grid.x,y=grid.y)
         else:
             ds = xr.open_dataset(filepath)
             grid=ds
-        self.target = ds[target_var].sel(time=~((ds.time.dt.month==2) & (ds.time.dt.day==29)))
+        self.target = ds[target_var]
         self.lat = grid['lat']   
         self.lon = grid['lon'] 
-        # self.y   = grid['y']
-        # self.x   = grid['x'] 
         ds.close()
 
 
 class Grid:
     def __init__(self,filepath=None):
-        print("Initializing Lambert grid, this may (and should) fail for other grid types") 
         ds = xr.open_dataset(filepath)
         self.lat = ds['lat']   
         self.lon = ds['lon'] 
-        # self.y   = ds['y']
-        # self.x   = ds['x'] 
         ds.close()
 
 
-class Domain:
-    def __init__(self, domain: str, size):
-        self.domainLims(domain,size)
-    def __repr__(self):
-        return f"[Domain object :lon_b {self.lon_b}, lon_e {self.lon_e}, lat_b {self.lat_b}, lat_e {self.lat_e}]" 
-    def domainLims(self, domain: str, size):
-        
-        print("domainlims: %s \n", domain)
+                                                    ###             I just commented out this class, in case it would be needed later               ####
 
-        if domain == 'MBP' :
-            if size == 8:
-                self.setLims(-3,8,37,47)
-            elif size == 16:
-                self.size_output_domain = 64
-                self.setLims(-10,12,32,54)
-            elif size == 32:
-                self.setLims(-17,27,25,70)
-        if domain=='ALP' :
-            if size == 16:
-                self.setLims(-3,18,33,56)
-            elif size == (22,16):
-                self.setLims(-9,22,35,57)
-            elif size == 22:
-                self.setLims = -9,22,32,63
-            elif size == 32:
-                self.setLims(-16,29,27,71)
-        if domain=='FRA':
-            if size == 16:
-                self.setLims(-8,16,33,56)
-            elif size == (20,16):
-                self.size_output_domain = 128
-                self.setLims(-9,19,33,56) 
-            elif size == (22,16):
-                self.setLims(-8,23,35,58)
-        if domain=='REU':
-            if size==8:
-                self.setLims(50,61,-25,-14) 
-    def setLims(self,lon_b,lon_e,lat_b,lat_e):
+# class Domain:
+#     def __init__(self, domain: str):
+#         self.domainLims(domain)
+#     def __repr__(self):
+#         return f"[Domain object :lon_b {self.lon_b}, lon_e {self.lon_e}, lat_b {self.lat_b}, lat_e {self.lat_e}]" 
+#     def domainLims(self, domain: str):        
 
-        print("setLims \n")
-        self.lon_b = lon_b
-        self.lon_e = lon_e
-        self.lat_b = lat_b
-        self.lat_e = lat_e
-    def applyDom(self, ds):
-        return ds.sel(lon=slice(self.lon_b,self.lon_e),lat=slice(self.lat_b,self.lat_e))  
-   
-   
+#         #TODO:  The actual values do not contain negative numbers so I have to
+#         #       manually write the limits
+
+#         if domain == 'ST' :
+#             print("chosen: ST")
+#             # self.setLims(-58,-20,59,72)
+#         if domain=='NT' :
+#             print("chosen: NT")
+#             # self.setLims(-74,-10,72,85)
+            
+
+
+#     def setLims(self,lon_b,lon_e,lat_b,lat_e):
+
+#         print("setLims \n")
+#         self.lon_b = lon_b
+#         self.lon_e = lon_e
+#         self.lat_b = lat_b
+#         self.lat_e = lat_e
+
+#         print(self.__repr__())
+#     def applyDom(self, ds):
+#         return ds.sel(lon=slice(self.lon_b,self.lon_e),lat=slice(self.lat_b,self.lat_e))  
