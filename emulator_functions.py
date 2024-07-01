@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -32,6 +31,7 @@ import numpy as np
 from math import cos,sin,pi
 # from typing import overload,List  
 # from cftime import DatetimeNoLeap,num2date
+from datetime import datetime
 
 
 # from lambertools import matchLambert 
@@ -49,7 +49,7 @@ physical_devices = tf.config.experimental.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 from tensorflow.keras.models import load_model, Model
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, UpSampling2D, Conv2DTranspose, Reshape, concatenate, BatchNormalization, Activation
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, UpSampling2D, Conv2DTranspose, Reshape, concatenate, BatchNormalization, Activation, Cropping2D
 from tensorflow.keras.layers import Input,  LeakyReLU, Concatenate, Dropout, Conv1D
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping, ModelCheckpoint
@@ -134,13 +134,12 @@ def wmae_gb_glob_quant(alpha,pbeta,quant):  # loss function fro precipitation em
 class Pred: 
     def __init__(self, 
                  domain: str,  # Target domain 
-                 domain_size,  # Size of the target domain
                  inputIn=[None], # list of Perdictors objects
                  filepath_grid= None, # path to a .nc file containing the grid informations to put in the output file
                  filepath_out=None, # path where to save the output file
                  filepath_model=None,  # path to the emulator file
-                 target_var='tas', # variable to emulate 
-                 attributes=None #list of attributes to pass to the output file
+                 target_var='precip', # variable to emulate 
+                 # attributes=None #list of attributes to pass to the output file
                 ):
         self.targetGrid = Grid(filepath_grid) 
 
@@ -162,16 +161,16 @@ class Pred:
 
         self.ds = self.make(input2D, input1D, timeout,
                             filepath_out=filepath_out,
-                            filepath_mask=filepath_mask,
+                            #filepath_mask=filepath_mask,
                             filepath_model=filepath_model
                             ,target_var=target_var,
-                            attributes=attributes)
+                            )
 
     def make(self, input2D, input1D, timeout,
              filepath_out=None,
-             filepath_mask=None,
+             # filepath_mask=None,
              filepath_model=None,
-             target_var='tas',
+             target_var='precip',
              attributes=None):
 
         full_input=[np.concatenate(input2D,axis=0),np.concatenate(input1D,axis=0)]
@@ -182,17 +181,23 @@ class Pred:
             unet=load_model(filepath_model, custom_objects={l.__name__: l,'rmse_k':rmse_k})
         else:
             unet=load_model(filepath_model, custom_objects={"rmse_k": rmse_k})
-        
+	
+        unet.summary()        
+
         pred_temp=[]
-        for k in range(int(full_input[0].shape[0]/20000)+1):
-            pred_temp.append(unet.predict([full_input[0][20000*k:20000*(k+1),:,:,:],full_input[1][20000*k:20000*(k+1),:,:,:]]))
+        for k in range(int(full_input[0].shape[0]/10)+1):            
+            pred_temp.append(unet.predict([full_input[0][10*k:10*(k+1),:,:,:],]))
         
+        # print(f"Pred_temp: {pred_temp}")
+
         pred=np.concatenate(pred_temp)
         K.clear_session()
         del full_input
- 
-        final=xr.Dataset().assign_coords({'time':full_time,'x':self.targetGrid.x,'y':self.targetGrid.y,'lon':self.targetGrid.lon,'lat':self.targetGrid.lat}) 
-        final['pred']=(('time','y','x'),pred[:,:,:,0])
+        
+        print(f"Pred shape: {pred.shape}")
+        
+        final=xr.Dataset().assign_coords({'time':full_time,'rlat':self.targetGrid.rlat,'rlon':self.targetGrid.rlon}) 
+        final['pred']=(('time','rlat','rlon'),pred[:,:,:,0])
         
         if attributes:
             print('attr')
@@ -215,7 +220,7 @@ class wrapModel:
                  filepath_sftlf=None, # 
                  filepath_grid=None,
                  filepath_gamma_param=None,
-                 batch_size=32, LR=0.005):
+                 batch_size=16, LR=0.005):
 
         # Build and train the emulator 
         # inputIn and tagretIn must be lists of Predictors and Targets objects  
@@ -225,6 +230,8 @@ class wrapModel:
 
         input2D = []
         input1D = []
+
+        print(f"LR: {LR}")	
 
         for an_input in inputIn:
             input2D.append(an_input.input2D)
@@ -243,8 +250,15 @@ class wrapModel:
         
         inputs_list=[]
         size=np.min([highestPowerof2(shape_inputs[0][0]),highestPowerof2(shape_inputs[0][1])])
+
+        print(f'nb_inputs: {nb_inputs}')
+        print(f'extra: { highestPowerof2(shape_inputs[0][0])}, {highestPowerof2(shape_inputs[0][1])} ')            
+        print(f'extra2: {size}')
+
         if nb_inputs==1:
             inputs = Input(shape = shape_inputs[0])
+            
+            print(f'nbinputs1: input layer: {shape_inputs[0]}')             
             conv_down=[]
             diff_lat=inputs.shape[1]-size+1
             diff_lon=inputs.shape[2]-size+1
@@ -257,7 +271,7 @@ class wrapModel:
                 pool=MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same')(conv)
                 conv_down.append(conv)
                 prev=pool
-            up=block_conv(prev, filters*min(filters*int(pow(2,i)),512))
+            up=block_conv(prev, min(filters*int(pow(2,i)),512))
             k=log2(size)
             for i in range(1,int(log2(size_target_domain)+1)):
                 if i<=k:
@@ -268,9 +282,12 @@ class wrapModel:
 
         if nb_inputs==2:
             inputs = Input(shape = shape_inputs[0])
+            print(f'nbinputs2: input layer: {shape_inputs[0]}')            
             conv_down=[]
             diff_lat=inputs.shape[1]-size+1
-            diff_lon=inputs.shape[2]-size+1
+            diff_lon=inputs.shape[2]-size+1 
+            print(f'diff_lat: {diff_lat}')
+            print(f'diff_lon: {diff_lon}')
             conv0=Conv2D(32, (diff_lat,diff_lon))(inputs)
             conv0=BatchNormalization()(conv0)
             conv0=Activation('relu')(conv0)
@@ -297,21 +314,29 @@ class wrapModel:
                     conv=block_up(up,filters)
                     up=conv
             inputs_list.append(inputs)
-            inputs_list.append(inputs2)
-        last=up
-        lastconv=Conv2D(1, 1, padding='same')(last)
-        return (Model(inputs=inputs_list, outputs=lastconv))
+            inputs_list.append(inputs2)        
+        last = up
+        lastconv = Conv2D(1, 1, padding='same')(last)
+        # Apply UpSampling2D to achieve the target height and width
+        upsampled = UpSampling2D(size=(2, 2))(lastconv)  # Upsample from (64, 64) to (128, 128)
+
+        # Use Conv2D to correct the final output shape to (121, 118)
+        final_output = Conv2D(1, (3, 3), padding='same')(upsampled)
+
+        # Cropping to the exact target dimensions
+        final_output = Cropping2D(cropping=((3, 4), (5, 5)))(final_output)  # Crop to (121, 118)
+
+        # Add an activation function if needed
+        final_output = Activation('sigmoid')(final_output)
+
+        return (Model(inputs=inputs_list, outputs=final_output))
 
     
     def make(self, targetIn, input2D, input1D, target_var,
              filepath_model=None, 
              filepath_sftlf=None, filepath_grid=None,
              filepath_gamma_param=None,
-             batch_size=32,LR=0.005):
-    
-       
-        # MV:   The following code needs an empty .keras/.h5 file to put the model in, however this if statement stops 
-        #       execution of the program in case a file like this exists, which seems like a contradiction. 
+             batch_size=16,LR=0.005):
         
         # if os.path.isfile(filepath_model) :
         #     print ( 'Model already trained.')
@@ -326,36 +351,42 @@ class wrapModel:
             full_input=[np.delete(full_input[0],idx,axis=0),
                         np.delete(full_input[1],idx,axis=0)]
         
-        print(full_target.shape) 
-        print(full_input[0].shape)
-        print(full_input[1].shape)
+        print(f'fulltarget shape: {full_target.shape}') 
+        print(f'fullinput0 shape: {full_input[0].shape}')
+        print(f'fullinput1 shape: {full_input[1].shape}')
         
         rn.seed(123)
                
-        idx_train=rn.sample(range(full_target.shape[0]), int(0.8*full_target.shape[0]))
+        idx_train=rn.sample(range(full_target.shape[0]), int(0.7*full_target.shape[0]))
         full_input_train=[full_input[k][idx_train,:,:,:] for k in range(len(full_input))]
         full_input_test=[np.delete(full_input[k],idx_train,axis=0) for k in range(len(full_input))]
         full_target_train=full_target[idx_train,:,:]
         full_target_test=np.delete(full_target,idx_train,axis=0)
-        print(full_input_train[0].shape)
-        print(full_input_train[1].shape)
-        print(full_target_train[:,:,:,None].shape)
+        
+        print("----")
+        print(f'fullinputtrain0 shape: {full_input_train[0].shape}')
+        print(f'fullinputtrain1 shape: {full_input_train[1].shape}')
+        print(f'fulltargettrain shape: {full_target_train[:,:,:].shape}')
+        # print(f'fulltargettrain none shape: {full_target_train[:,:,:,None].shape}')
+
+        print("----")
+        print(f'fullinputtest0 shape: {full_input_test[0].shape}')        
+        print(f'fullinputtest1 shape: {full_input_test[1].shape}')        
+        print(f'fulltargettrain shape: {full_target_train[:,:,:].shape}')
+        # print(f'fulltargettest none shape: {full_target_test[:,:,:,None].shape}')
         
         del full_input, full_target    
     
-        dataset_tr = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_train[0], 
-                                                           "input_2": full_input_train[1]},
-                                                            full_target_train[:,:,:,None])).batch(batch_size)
-        dataset_ts = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_test[0], 
-                                                           "input_2": full_input_test[1]},
-                                                            full_target_test[:,:,:,None])).batch(batch_size)
+        dataset_tr = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_train[0]},
+                                                            full_target_train[:,:,:])).batch(batch_size)
+        dataset_ts = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_test[0]},
+                                                            full_target_test[:,:,:])).batch(batch_size)
         
         del full_input_train, full_target_train, full_input_test, full_target_test
         
         # sftlf_ds = xr.open_dataset(filepath_sftlf)
         # sftlf = matchLambert(grid_ds, sftlf_ds, 4)   
-        
-        
+
         grid_ds    = xr.open_dataset(filepath_grid, engine="netcdf4")     
         unet=self.unet_maker(nb_inputs=len(dataset_tr.element_spec[0]),
                             size_target_domain=dataset_tr.element_spec[1].shape[1],
@@ -363,7 +394,7 @@ class wrapModel:
                             filters = 64)
 
         unet.summary()
-        epochs = 1
+        epochs = 110
         
         if target_var=='pr':
             gamma_param=xr.open_dataset(filepath_gamma_param).sel(x=grid_ds.x,y=grid_ds.y)
@@ -375,13 +406,15 @@ class wrapModel:
             l = 'mse'
         
         print(l)
-        callbacks = [ReduceLROnPlateau(monitor='val_loss', factor=0.7, patience=4, verbose=1), EarlyStopping(monitor='val_loss', patience=15, verbose=1), ModelCheckpoint(filepath_model, monitor='val_loss', verbose=1, save_best_only=True)]
+        callbacks = [ReduceLROnPlateau(monitor='val_loss', factor=0.7, patience=4, verbose=1), EarlyStopping(monitor='val_loss', patience=20, verbose=1), ModelCheckpoint(filepath_model, monitor='val_loss', verbose=1, save_best_only=True)]
         
         unet.compile(optimizer=Adam(learning_rate=LR), loss=l, metrics=[tf.metrics.RootMeanSquaredError()])
         
         tf.config.run_functions_eagerly(True)
-        
-      
+
+        now = datetime.now()
+        print(f"Start of training: {now}")
+
         unet.fit(dataset_tr,
                 epochs=epochs,   
                 callbacks = callbacks,
@@ -401,7 +434,7 @@ class Predictors:
                  var_list=[None],                 # List of predictors (2D)
                  filepath=None,                   # path to the input file, must be a .nc file containing all 2D variables used as predictors (except aerosols) 
                  filepath_ref=None,               # path to the file used to normalize the inputs, must be similar to 'filepath'
-                 stand=1,                         # way to standardize the data, see strandardize functions upper
+                 stand=2,                         # way to standardize the data, see strandardize functions upper
                  ref_period=['1960','1962'],      # reference periode to use for normalisation
                  means='r',stds='r',              # If stand = 1, to include or not ('n') the means and standard deviation
                  aero_ext=False,                  # Bool, to be True if aerosols variable is not in the input file 
@@ -453,12 +486,13 @@ class Predictors:
         
         INPUT_2D=DATASET[var_list].to_array().values.transpose((1,2,3,0))
         REF_ARRAY=DATASET_ref[var_list].to_array().values.transpose((1,2,3,0))
-        # del DATASET_ref_wleap
-
+        # del DATASET_ref_wleap        
+        print(f"Shape of INPUT2D: {INPUT_2D.shape}")
         # MV: Normalization of 2D variables happens below in the "standardize" functions
         
         if stand==1:
            INPUT_2D_SDTZ = standardize(INPUT_2D, "INPUT_2D")
+           print(f'shape of ndata: {INPUT_2D_SDTZ.shape}')
         elif stand==2:
            INPUT_2D_SDTZ = standardize2(INPUT_2D,REF_ARRAY, "INPUT_2D")
 
@@ -546,16 +580,20 @@ class Target:
             ds = xr.open_dataset(filepath)
             grid=ds
         self.target = ds[target_var]
-        self.lat = grid['lat']   
-        self.lon = grid['lon'] 
+        # self.lat = grid['lat']   
+        # self.lon = grid['lon'] 
+        self.rlat = grid['rlat']
+        self.rlon = grid['rlon']
         ds.close()
 
 
 class Grid:
     def __init__(self,filepath=None):
         ds = xr.open_dataset(filepath)
-        self.lat = ds['lat']   
-        self.lon = ds['lon'] 
+        # self.lat = ds['lat']   
+        # self.lon = ds['lon'] 
+        self.rlat = ds['rlat']
+        self.rlon = ds['rlon']
         ds.close()
 
 
