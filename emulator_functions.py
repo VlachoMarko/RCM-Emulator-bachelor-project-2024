@@ -21,28 +21,15 @@ Pred : to make the prediction.
 
 import sys
 import xarray as xr
-# import pandas as pd
 import numpy as np
-# import glob 
-# import matplotlib.pyplot as plt
-# import dask.array as da
-# from pandas import to_datetime
-# from astropy.io import ascii
-from math import cos,sin,pi
-# from typing import overload,List  
-# from cftime import DatetimeNoLeap,num2date
-from datetime import datetime
-
-
-# from lambertools import matchLambert 
-from math import log2,pow
-# import os
 import random as rn
-
+import netCDF4 as nc
+import cftime
+from datetime import datetime
+from math import log2,pow,cos,sin,pi
 
 import tensorflow as tf
 from tensorflow.keras import backend as K
-# from tensorflow.compat.v1.keras.backend import set_session
 
 #To be activated only if GPU available
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -168,45 +155,132 @@ class Pred:
 
     def make(self, input2D, input1D, timeout,
              filepath_out=None,
-             # filepath_mask=None,
              filepath_model=None,
              target_var='precip',
              attributes=None):
 
-        full_input=[np.concatenate(input2D,axis=0),np.concatenate(input1D,axis=0)]
-        full_time=xr.concat(timeout,dim='time')
-        
+        full_input=[np.concatenate(input2D, axis=0), np.concatenate(input1D, axis=0)]
+        full_time=xr.concat(timeout, dim='time')
+
+        reference_date = cftime.DatetimeNoLeap(1950, 1, 1)
+        numeric_time = np.array([(t - reference_date).days for t in full_time.values], dtype=float)
+
         if target_var=='pr':
             l=wmae_gb_glob_quant(0.5,0.5,1)
-            unet=load_model(filepath_model, custom_objects={l.__name__: l,'rmse_k':rmse_k})
+            unet=load_model(filepath_model, custom_objects={l.__name__: l, 'rmse_k': rmse_k})
         else:
             unet=load_model(filepath_model, custom_objects={"rmse_k": rmse_k})
 	
         unet.summary()        
 
         pred_temp=[]
-        for k in range(int(full_input[0].shape[0]/10)+1):            
-            pred_temp.append(unet.predict([full_input[0][10*k:10*(k+1),:,:,:],]))
+        for k in range(int(full_input[0].shape[0] / 10) + 1):            
+            pred_temp.append(unet.predict([full_input[0][10*k:10*(k+1),:,:,:], ]))
         
-        # print(f"Pred_temp: {pred_temp}")
-
-        pred=np.concatenate(pred_temp)
+        pred = np.concatenate(pred_temp)
         K.clear_session()
         del full_input
         
         print(f"Pred shape: {pred.shape}")
         
-        final=xr.Dataset().assign_coords({'time':full_time,'rlat':self.targetGrid.rlat,'rlon':self.targetGrid.rlon}) 
-        final['pred']=(('time','rlat','rlon'),pred[:,:,:,0])
+        # Create a new NetCDF file with desired structure and metadata
+        ds = nc.Dataset(filepath_out, 'w', format='NETCDF4')
         
+        # Create dimensions
+        ds.createDimension('time', None)  # Unlimited
+        ds.createDimension('bnds', 2)
+        ds.createDimension('rlon', len(self.targetGrid.rlon))
+        ds.createDimension('rlat', len(self.targetGrid.rlat))
+        ds.createDimension('height', 1)
+
+        # Create variables
+        time = ds.createVariable('time', 'f8', ('time',))
+        time_bnds = ds.createVariable('time_bnds', 'f8', ('time', 'bnds'))
+        lon = ds.createVariable('lon', 'f8', ('rlat', 'rlon'))
+        lat = ds.createVariable('lat', 'f8', ('rlat', 'rlon'))
+        rlon = ds.createVariable('rlon', 'f8', ('rlon',))
+        rlat = ds.createVariable('rlat', 'f8', ('rlat',))
+        height = ds.createVariable('height', 'f8', ('height',))
+        rotated_pole = ds.createVariable('rotated_pole', 'i4')
+        precip = ds.createVariable('precip', 'f4', ('time', 'height', 'rlat', 'rlon'), chunksizes=(1, 1, 121, 118), fill_value=-9999.0)
+
+        # Add attributes to variables
+        time.standard_name = "time"
+        time.long_name = "time"
+        time.bounds = "time_bnds"
+        time.units = "days since 1950-01-01 00:00:00.0"
+        time.calendar = "365_day"
+        time.axis = "T"
+        time._ChunkSizes = np.uint32(512)
+
+        time_bnds._ChunkSizes = np.array([1, 2], dtype='uint32')
+
+        lon.standard_name = "longitude"
+        lon.long_name = "longitude"
+        lon.units = "degrees_east"
+        lon._CoordinateAxisType = "Lon"
+
+        lat.standard_name = "latitude"
+        lat.long_name = "latitude"
+        lat.units = "degrees_north"
+        lat._CoordinateAxisType = "Lat"
+
+        rlon.standard_name = "projection_x_coordinate"
+        rlon.long_name = "longitude in rotated pole grid"
+        rlon.units = "degrees"
+        rlon.axis = "X"
+
+        rlat.standard_name = "projection_y_coordinate"
+        rlat.long_name = "latitude in rotated pole grid"
+        rlat.units = "degrees"
+        rlat.axis = "Y"
+
+        height.standard_name = "height"
+        height.long_name = "height above the surface"
+        height.units = "m"
+        height.positive = "up"
+        height.axis = "Z"
+
+        rotated_pole.proj_parameters = "-m 57.295779506 +proj=ob_tran +o_proj=latlon +o_lat_p=18.0 +lon_0=-37.5"
+        rotated_pole.projection_name = "rotated_latitude_longitude"
+        rotated_pole.long_name = "projection details"
+        rotated_pole.proj4_params = "-m 57.295779506 +proj=ob_tran +o_proj=latlon +o_lat_p=18.0 +lon_0=-37.5"
+        rotated_pole.grid_north_pole_longitude = 142.5
+        rotated_pole.grid_mapping_name = "rotated_latitude_longitude"
+        rotated_pole.grid_north_pole_latitude = 18.0
+
+        precip.standard_name = "precipitation_flux"
+        precip.long_name = "Total Precipitative Flux"
+        precip.units = "kg m-2 s-1"
+        precip.grid_mapping = "rotated_pole"
+        precip.coordinates = "lat lon"
+        precip.cell_methods = "time: 24-hr averaged values"
+        precip._ChunkSizes = np.array([1, 1, 121, 118], dtype='uint32')
+
+        # Add data
+        rlon[:] = self.targetGrid.rlon
+        rlat[:] = self.targetGrid.rlat
+        lon[:] = np.random.uniform(-180, 180, (len(self.targetGrid.rlat), len(self.targetGrid.rlon)))  # Example values
+        lat[:] = np.random.uniform(-90, 90, (len(self.targetGrid.rlat), len(self.targetGrid.rlon)))  # Example values
+        height[:] = [2]  # Example value, can be changed as needed
+        time[:] = numeric_time  # Using full_time from xr.concat
+        time_bnds[:, :] = np.column_stack((np.arange(len(full_time)), np.arange(1, len(full_time) + 1)))  # Example bounds
+        precip[:, 0, :, :] = pred[:, :, :, 0]  # Assign predicted values
+
         if attributes:
             print('attr')
-            final=final.assign_attrs(attributes)
+            for key, value in attributes.items():
+                ds.setncattr(key, value)
         
-        final.to_netcdf(filepath_out) 
-        print(f"Saved file to {filepath_out}, returning dataset") 
+        ds.close()
+        print(f"Saved file to {filepath_out}, returning dataset")
         
-        return final      
+        return xr.open_dataset(filepath_out)      
+
+    # Example usage
+    # Assuming the required parameters are correctly defined elsewhere in your code
+    # pred = Pred(domain, inputIn, filepath_grid, filepath_out, filepath_model, target_var)
+    # pred.create_nc_file(filepath_out)   
 
 
 
