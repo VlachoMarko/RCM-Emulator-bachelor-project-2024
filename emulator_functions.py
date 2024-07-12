@@ -24,9 +24,9 @@ import xarray as xr
 import numpy as np
 import random as rn
 import netCDF4 as nc
-import cftime
 from datetime import datetime
 from math import log2,pow,cos,sin,pi
+import cftime
 
 import tensorflow as tf
 from tensorflow.keras import backend as K
@@ -69,6 +69,15 @@ def standardize2(data,ref,name):
     ndata = (data - mean)/sd
     return (ndata)
 
+def denormalize(data,mean,sd):
+    mean = mean[:,:,:,0:1]
+    sd = sd[:,:,:,0:1]
+    print(f'mean in shape: {mean.shape}')
+    print(f'mean in : {mean}')
+    print(f'sd in shape: {sd.shape}')
+    print(f'sd in : {sd}') 
+    ndata = (data * sd) + mean
+    return ndata
 
 def mon2day(data):
     nbyrs=int(data.shape[0]/12)
@@ -122,11 +131,13 @@ class Pred:
     def __init__(self, 
                  domain: str,  # Target domain 
                  inputIn=[None], # list of Perdictors objects
+                 targetIn=None,
                  filepath_grid= None, # path to a .nc file containing the grid informations to put in the output file
                  filepath_out=None, # path where to save the output file
                  filepath_model=None,  # path to the emulator file
                  target_var='precip', # variable to emulate 
-                 # attributes=None #list of attributes to pass to the output file
+                 attributes=None, #list of attributes to pass to the output file
+                 mean=0, sd=0
                 ):
         self.targetGrid = Grid(filepath_grid) 
 
@@ -140,75 +151,124 @@ class Pred:
         input2D = []
         input1D = []
         timeout = []
+        mean = 0
+        sd = 0
 
         for an_input in inputIn:
             input2D.append(an_input.input2D)
             input1D.append(an_input.input1D)
             timeout.append(an_input.timeout)
+            mean = an_input.mean
+            sd = an_input.sd
 
-        self.ds = self.make(input2D, input1D, timeout,
+        self.ds = self.make(input2D, input1D, timeout, targetIn,
                             filepath_out=filepath_out,
                             #filepath_mask=filepath_mask,
-                            filepath_model=filepath_model
-                            ,target_var=target_var,
+                            filepath_model=filepath_model,
+                            target_var=target_var,
+                            attributes=attributes,
+                            mean=mean, sd=sd
                             )
 
-    def make(self, input2D, input1D, timeout,
+    def make(self, input2D, input1D, timeout, targetIn,
              filepath_out=None,
              filepath_model=None,
              target_var='precip',
-             attributes=None):
+             attributes=None,
+             mean=0,
+             sd=0):
 
         full_input=[np.concatenate(input2D, axis=0), np.concatenate(input1D, axis=0)]
         full_time=xr.concat(timeout, dim='time')
+        # full_target=np.concatenate(targetIn ,axis=0)
 
-        reference_date = cftime.DatetimeNoLeap(1950, 1, 1)
+        print(f'original mean: {mean}')
+        print(f'original sd: {sd}')                
+
+        # if np.any(np.isnan(full_target)):
+              # print("nan found1")  
+              # idx=np.unique(np.where(np.isnan(full_target))[0])            
+              # full_target=np.delete(full_target,idx,axis=0)            
+              # full_input=[np.delete(full_input[0],idx,axis=0),np.delete(full_input[1],idx,axis=0)]                
+        
+
+        if np.any(np.isnan(full_input[0])):
+               print("nan found2")  
+               idx=np.unique(np.where(np.isnan(full_input[0]))[0])                     
+               # full_target=np.delete(full_target,idx,axis=0)            
+               full_input=[np.delete(full_input[0],idx,axis=0),np.delete(full_input[1],idx,axis=0)]                             
+               print(f'full_input shape after: {full_input[0].shape[0]}')
+
+        # rn.seed(123)                      
+        # idx_train=rn.sample(range(full_target.shape[0]), int(0.8*full_target.shape[0]))        
+        # full_input_train=[full_input[k][idx_train,:,:,:] for k in range(len(full_input))]        
+        # full_input_test=[np.delete(full_input[k],idx_train,axis=0) for k in range(len(full_input))]        
+        # full_target_train=full_target[idx_train,:,:]        
+        # full_target_test=np.delete(full_target,idx_train,axis=0)
+
+        reference_date = cftime.DatetimeNoLeap(1961, 1, 1)        
         numeric_time = np.array([(t - reference_date).days for t in full_time.values], dtype=float)
-
+        
         if target_var=='pr':
             l=wmae_gb_glob_quant(0.5,0.5,1)
             unet=load_model(filepath_model, custom_objects={l.__name__: l, 'rmse_k': rmse_k})
         else:
-            unet=load_model(filepath_model, custom_objects={"rmse_k": rmse_k})
+            unet=load_model(filepath_model, custom_objects={"rmse_k": rmse_k, "LeakyReLU": LeakyReLU})
 	
         unet.summary()        
 
         pred_temp=[]
-        for k in range(int(full_input[0].shape[0] / 10) + 1):            
-            pred_temp.append(unet.predict([full_input[0][10*k:10*(k+1),:,:,:], ]))
+        for k in range(int(full_input[0].shape[0] / 20000) + 1):            
+            pred_temp.append(unet.predict([full_input[0][20000*k:20000*(k+1),:,:,:],full_input[1][20000*k:20000*(k+1),:,:,:]]))
         
         pred = np.concatenate(pred_temp)
+        print(f'initial pred: {pred}')
         K.clear_session()
         del full_input
         
         print(f"Pred shape: {pred.shape}")
+        # print(f"mean shape: {mean.shape}")
+        # print(f"sd shape: {sd.shape}")
+
+        # if mean.all() != 0:
+        #    print(f"denormalize pred")
+        #    de_pred = denormalize(pred, mean, sd)
+        #     pred = de_pred
+        #    print(f"Pred shape after: {pred.shape}")
+        
+        print(f"pred: {pred}")
         
         # Create a new NetCDF file with desired structure and metadata
         ds = nc.Dataset(filepath_out, 'w', format='NETCDF4')
         
         # Create dimensions
         ds.createDimension('time', None)  # Unlimited
+        ds.createDimension('lat', len(self.targetGrid.lat))
+        ds.createDimension('lon', len(self.targetGrid.lon))
         ds.createDimension('bnds', 2)
-        ds.createDimension('rlon', len(self.targetGrid.rlon))
-        ds.createDimension('rlat', len(self.targetGrid.rlat))
-        ds.createDimension('height', 1)
+        # ds.createDimension('height', 1)
 
         # Create variables
         time = ds.createVariable('time', 'f8', ('time',))
         time_bnds = ds.createVariable('time_bnds', 'f8', ('time', 'bnds'))
-        lon = ds.createVariable('lon', 'f8', ('rlat', 'rlon'))
-        lat = ds.createVariable('lat', 'f8', ('rlat', 'rlon'))
-        rlon = ds.createVariable('rlon', 'f8', ('rlon',))
-        rlat = ds.createVariable('rlat', 'f8', ('rlat',))
-        height = ds.createVariable('height', 'f8', ('height',))
-        rotated_pole = ds.createVariable('rotated_pole', 'i4')
-        precip = ds.createVariable('precip', 'f4', ('time', 'height', 'rlat', 'rlon'), chunksizes=(1, 1, 121, 118), fill_value=-9999.0)
+        lat = ds.createVariable('lat', 'f8', ('lat'))
+        lon = ds.createVariable('lon', 'f8', ('lon'))
+
+        # lon = ds.createVariable('lon', 'f8', ('rlat', 'rlon'))
+        # lat = ds.createVariable('lat', 'f8', ('rlat', 'rlon'))
+        # rlon = ds.createVariable('rlon', 'f8', ('rlon',))
+        # rlat = ds.createVariable('rlat', 'f8', ('rlat',))
+        # height = ds.createVariable('height', 'f8', ('height',))
+        # rotated_pole = ds.createVariable('rotated_pole', 'i4')
+
+        # precip = ds.createVariable('precip', 'f8', ('time','lat','lon'), chunksizes=(1, 128, 128), fill_value=-9999.0)
+        t2m = ds.createVariable('t2m', 'f8', ('time','lat','lon'), chunksizes=(1, 128, 128), fill_value=-9999.0)       
 
         # Add attributes to variables
         time.standard_name = "time"
         time.long_name = "time"
         time.bounds = "time_bnds"
-        time.units = "days since 1950-01-01 00:00:00.0"
+        time.units = "days since 1961-01-01 00:00:00.0"
         time.calendar = "365_day"
         time.axis = "T"
         time._ChunkSizes = np.uint32(512)
@@ -218,54 +278,70 @@ class Pred:
         lon.standard_name = "longitude"
         lon.long_name = "longitude"
         lon.units = "degrees_east"
-        lon._CoordinateAxisType = "Lon"
+        lon.axis = "X"
+        # lon._CoordinateAxisType = "Lon"
 
         lat.standard_name = "latitude"
         lat.long_name = "latitude"
         lat.units = "degrees_north"
-        lat._CoordinateAxisType = "Lat"
+        lat.axis = "Y"
+        # lat._CoordinateAxisType = "Lat"
 
-        rlon.standard_name = "projection_x_coordinate"
-        rlon.long_name = "longitude in rotated pole grid"
-        rlon.units = "degrees"
-        rlon.axis = "X"
+        # rlon.standard_name = "projection_x_coordinate"
+        # rlon.long_name = "longitude in rotated pole grid"
+        # rlon.units = "degrees"
+        # rlon.axis = "X"
 
-        rlat.standard_name = "projection_y_coordinate"
-        rlat.long_name = "latitude in rotated pole grid"
-        rlat.units = "degrees"
-        rlat.axis = "Y"
+        # rlat.standard_name = "projection_y_coordinate"
+        # rlat.long_name = "latitude in rotated pole grid"
+        # rlat.units = "degrees"
+        # rlat.axis = "Y"
 
-        height.standard_name = "height"
-        height.long_name = "height above the surface"
-        height.units = "m"
-        height.positive = "up"
-        height.axis = "Z"
+        # height.standard_name = "height"
+        # height.long_name = "height above the surface"
+        # height.units = "m"
+        # height.positive = "up"
+        # height.axis = "Z"
 
-        rotated_pole.proj_parameters = "-m 57.295779506 +proj=ob_tran +o_proj=latlon +o_lat_p=18.0 +lon_0=-37.5"
-        rotated_pole.projection_name = "rotated_latitude_longitude"
-        rotated_pole.long_name = "projection details"
-        rotated_pole.proj4_params = "-m 57.295779506 +proj=ob_tran +o_proj=latlon +o_lat_p=18.0 +lon_0=-37.5"
-        rotated_pole.grid_north_pole_longitude = 142.5
-        rotated_pole.grid_mapping_name = "rotated_latitude_longitude"
-        rotated_pole.grid_north_pole_latitude = 18.0
+        # rotated_pole.proj_parameters = "-m 57.295779506 +proj=ob_tran +o_proj=latlon +o_lat_p=18.0 +lon_0=-37.5"
+        # rotated_pole.projection_name = "rotated_latitude_longitude"
+        # rotated_pole.long_name = "projection details"
+        # rotated_pole.proj4_params = "-m 57.295779506 +proj=ob_tran +o_proj=latlon +o_lat_p=18.0 +lon_0=-37.5"
+        # rotated_pole.grid_north_pole_longitude = 142.5
+        # rotated_pole.grid_mapping_name = "rotated_latitude_longitude"
+        # rotated_pole.grid_north_pole_latitude = 18.0
 
-        precip.standard_name = "precipitation_flux"
-        precip.long_name = "Total Precipitative Flux"
-        precip.units = "kg m-2 s-1"
-        precip.grid_mapping = "rotated_pole"
-        precip.coordinates = "lat lon"
-        precip.cell_methods = "time: 24-hr averaged values"
-        precip._ChunkSizes = np.array([1, 1, 121, 118], dtype='uint32')
+        # precip.standard_name = "precipitation_flux"
+        # precip.long_name = "Total Precipitative Flux"
+        # precip.units = "kg m-2 s-1"
+    
+        # precip.grid_mapping = "rotated_pole"
+        # precip.coordinates = "lat lon"
+        
+        # precip.missing_value = np.float32(-9999.0)
+        # precip.cell_methods = "time: 24-hr averaged values"
+        # precip._ChunkSizes = np.array([1, 128, 128], dtype='uint32')
+
+        t2m.standard_name = "air_temperature"
+        t2m.long_name = "2-m Temperature"  
+        t2m.units = "K"
+        t2m.missing_value = np.float32(-9999.0)  
+        t2m.cell_methods = "time: 24-hr averaged values"  
+        t2m._ChunkSizes = np.array([1, 128, 128], dtype='uint32')
+
 
         # Add data
-        rlon[:] = self.targetGrid.rlon
-        rlat[:] = self.targetGrid.rlat
-        lon[:] = np.random.uniform(-180, 180, (len(self.targetGrid.rlat), len(self.targetGrid.rlon)))  # Example values
-        lat[:] = np.random.uniform(-90, 90, (len(self.targetGrid.rlat), len(self.targetGrid.rlon)))  # Example values
-        height[:] = [2]  # Example value, can be changed as needed
+        # rlon[:] = self.targetGrid.rlon
+        # rlat[:] = self.targetGrid.rlat 
         time[:] = numeric_time  # Using full_time from xr.concat
-        time_bnds[:, :] = np.column_stack((np.arange(len(full_time)), np.arange(1, len(full_time) + 1)))  # Example bounds
-        precip[:, 0, :, :] = pred[:, :, :, 0]  # Assign predicted values
+        time_bnds[:, :] = np.column_stack((np.arange(len(full_time)), np.arange(1, len(full_time) + 1)))
+        lat[:] = self.targetGrid.lat
+        lon[:] = self.targetGrid.lon
+        # height[:] = [1]
+        pred = pred[:,:,:,0]   
+        print(f'final pred shape: {pred.shape}')
+        t2m[:,:,:] = pred
+        # precip[:,:,:] = pred  # Assign predicted values
 
         if attributes:
             print('attr')
@@ -328,82 +404,83 @@ class wrapModel:
         print(f'nb_inputs: {nb_inputs}')
         print(f'extra: { highestPowerof2(shape_inputs[0][0])}, {highestPowerof2(shape_inputs[0][1])} ')            
         print(f'extra2: {size}')
-
+      
         if nb_inputs==1:
             inputs = Input(shape = shape_inputs[0])
-            
+    
             print(f'nbinputs1: input layer: {shape_inputs[0]}')             
             conv_down=[]
             diff_lat=inputs.shape[1]-size+1
             diff_lon=inputs.shape[2]-size+1
-            conv0=Conv2D(32, (diff_lat,diff_lon))(inputs)
+            conv0=Conv2D(32, (3,3), padding='same', strides=(1,4))(inputs)
             conv0=BatchNormalization()(conv0)
-            conv0=Activation('relu')(conv0)
+            conv0=Activation("relu")(conv0)
+            # conv0=LeakyReLU(alpha=0.1)(conv0)
             prev=conv0
             for i in range(int(log2(size))):
-                conv=block_conv(prev, min(filters*int(pow(2,i)),512))
-                pool=MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same')(conv)
-                conv_down.append(conv)
-                prev=pool
+                  conv=block_conv(prev, min(filters*int(pow(2,i)),512))
+                  pool=MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same')(conv)
+                  conv_down.append(conv)
+                  prev=pool
             up=block_conv(prev, min(filters*int(pow(2,i)),512))
             k=log2(size)
             for i in range(1,int(log2(size_target_domain)+1)):
                 if i<=k:
-                    up=block_up_conc(up,min(filters*int(pow(2,k-i)),512),conv_down[int(k-i)])
+                  up=block_up_conc(up,min(filters*int(pow(2,k-i)),512),conv_down[int(k-i)])
                 else :
-                    up=block_up(up,filters)
+                  up=block_up(up,filters) 
             inputs_list.append(inputs)
-
+ 
         if nb_inputs==2:
             inputs = Input(shape = shape_inputs[0])
             print(f'nbinputs2: input layer: {shape_inputs[0]}')            
             conv_down=[]
             diff_lat=inputs.shape[1]-size+1
-            diff_lon=inputs.shape[2]-size+1 
-            print(f'diff_lat: {diff_lat}')
-            print(f'diff_lon: {diff_lon}')
+            diff_lon=inputs.shape[2]-size+1
+
+            print(f'diff lat: {diff_lat}')
+            print(f'diff lon: {diff_lon}')
+ 
             conv0=Conv2D(32, (diff_lat,diff_lon))(inputs)
             conv0=BatchNormalization()(conv0)
-            conv0=Activation('relu')(conv0)
+            conv0=Activation("relu")(conv0)
+            # conv0=LeakyReLU(alpha=0.1)(conv0)
             prev=conv0
             for i in range(int(log2(size))):
-                conv=block_conv(prev, min(filters*int(pow(2,i)),512))
-                pool=MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same')(conv)
-                conv_down.append(conv)
-                prev=pool
+                  conv=block_conv(prev, min(filters*int(pow(2,i)),512))
+                  pool=MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same')(conv)
+                  conv_down.append(conv)
+                  prev=pool
 
             last_conv=block_conv(prev, min(filters*int(pow(2,i)),512))
             inputs2 = Input(shape=shape_inputs[1])
             model2 = Dense(filters)(inputs2)
             for i in range(1,int(log2(size))):
-                model2 = Dense(min(filters*int(pow(2,i)),512))(model2)
+                  model2 = Dense(min(filters*int(pow(2,i)),512))(model2)
 
             merged = concatenate([last_conv,model2])
             up=merged
             k=log2(size)
             for i in range(1,int(log2(size_target_domain)+1)):
-                if i<=k:
-                    up=block_up_conc(up,min(filters*int(pow(2,k-i)),512),conv_down[int(k-i)])
-                else :
-                    conv=block_up(up,filters)
-                    up=conv
+                  if i<=k:
+                        up=block_up_conc(up,min(filters*int(pow(2,k-i)),512),conv_down[int(k-i)])
+                  else:
+                        conv=block_up(up,filters)
+                        up=conv
             inputs_list.append(inputs)
             inputs_list.append(inputs2)        
         last = up
-        lastconv = Conv2D(1, 1, padding='same')(last)
+        last_conv = Conv2D(1,1, padding='same')(last)
+
         # Apply UpSampling2D to achieve the target height and width
-        upsampled = UpSampling2D(size=(2, 2))(lastconv)  # Upsample from (64, 64) to (128, 128)
+        # upsampled = UpSampling2D(size=(1, 2),interpolation="nearest")(last_conv)  # Upsample from last dimensions to 1x and 2x
+ 
+        # final_output = Conv2D(1,1,padding='same')(upsampled)
+        
+        return (Model(inputs=inputs_list, outputs=last_conv))
 
-        # Use Conv2D to correct the final output shape to (121, 118)
-        final_output = Conv2D(1, (3, 3), padding='same')(upsampled)
-
-        # Cropping to the exact target dimensions
-        final_output = Cropping2D(cropping=((3, 4), (5, 5)))(final_output)  # Crop to (121, 118)
-
-        # Add an activation function if needed
-        final_output = Activation('sigmoid')(final_output)
-
-        return (Model(inputs=inputs_list, outputs=final_output))
+           
+        
 
     
     def make(self, targetIn, input2D, input1D, target_var,
@@ -447,28 +524,30 @@ class wrapModel:
         print(f'fullinputtest0 shape: {full_input_test[0].shape}')        
         print(f'fullinputtest1 shape: {full_input_test[1].shape}')        
         print(f'fulltargettrain shape: {full_target_train[:,:,:].shape}')
-        # print(f'fulltargettest none shape: {full_target_test[:,:,:,None].shape}')
+        print(f'fulltarget shape: {full_target_test[:,:,:].shape}')
         
-        del full_input, full_target    
-    
-        dataset_tr = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_train[0]},
-                                                            full_target_train[:,:,:])).batch(batch_size)
-        dataset_ts = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_test[0]},
-                                                            full_target_test[:,:,:])).batch(batch_size)
         
-        del full_input_train, full_target_train, full_input_test, full_target_test
+        dataset_tr = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_train[0], "input_2": full_input_train[1]},
+                                                         full_target_train[:,:,:])).batch(batch_size)        
+        dataset_ts = tf.data.Dataset.from_tensor_slices(({"input_1": full_input_test[0],"input_2": full_input_test[1]},                                                            
+                                                         full_target_test[:,:,:])).batch(batch_size)
+        
+        del full_input_train, full_target_train, full_input_test, full_target_test, full_target, full_input
         
         # sftlf_ds = xr.open_dataset(filepath_sftlf)
         # sftlf = matchLambert(grid_ds, sftlf_ds, 4)   
 
         grid_ds    = xr.open_dataset(filepath_grid, engine="netcdf4")     
+	
+	# MV: Change filters to smaller size than smallest dimension(?)        
+
         unet=self.unet_maker(nb_inputs=len(dataset_tr.element_spec[0]),
                             size_target_domain=dataset_tr.element_spec[1].shape[1],
-                            shape_inputs=[tuple(dataset_tr.element_spec[0][A].shape[1:]) for A in dataset_tr.element_spec[0]],
+                            shape_inputs=[tuple(dataset_tr.element_spec[0][A].shape[1:]) for A in dataset_tr.element_spec[0]],	
                             filters = 64)
 
         unet.summary()
-        epochs = 110
+        epochs = 120
         
         if target_var=='pr':
             gamma_param=xr.open_dataset(filepath_gamma_param).sel(x=grid_ds.x,y=grid_ds.y)
@@ -480,7 +559,7 @@ class wrapModel:
             l = 'mse'
         
         print(l)
-        callbacks = [ReduceLROnPlateau(monitor='val_loss', factor=0.7, patience=4, verbose=1), EarlyStopping(monitor='val_loss', patience=20, verbose=1), ModelCheckpoint(filepath_model, monitor='val_loss', verbose=1, save_best_only=True)]
+        callbacks = [ReduceLROnPlateau(monitor='val_loss', factor=0.7, patience=4, verbose=1), EarlyStopping(monitor='val_loss', patience=25, verbose=1), ModelCheckpoint(filepath_model, monitor='val_loss', verbose=1, save_best_only=True)]
         
         unet.compile(optimizer=Adam(learning_rate=LR), loss=l, metrics=[tf.metrics.RootMeanSquaredError()])
         
@@ -504,7 +583,7 @@ class Predictors:
     #make the predictors following a set of parameters to define 
     def __init__(self,
                  domain: str,                     # output domain name, must be defined in the class Domain
-                 # domain_size,                     # size of the input domain, can be integer or tuple, must be define in the class domain.  
+                 # domain_size,                   # size of the input domain, can be integer or tuple, must be define in the class domain.  
                  var_list=[None],                 # List of predictors (2D)
                  filepath=None,                   # path to the input file, must be a .nc file containing all 2D variables used as predictors (except aerosols) 
                  filepath_ref=None,               # path to the file used to normalize the inputs, must be similar to 'filepath'
@@ -514,13 +593,13 @@ class Predictors:
                  aero_ext=False,                  # Bool, to be True if aerosols variable is not in the input file 
                  filepath_aero=None,              # path to aerosol files (only if not in the input file)
                  aero_stdz=False,                 # Bool, to normalise or not the inputs
-                 aero_var='aero',                  # name of aero variable in filepath_aero
+                 aero_var='aero',                 # name of aero variable in filepath_aero
                  filepath_forc=None,              # path to the .csv file containing external forcings (GHG, solar, ozone...)
                  opt_ghg='ONE',                   # Option for the ghg, each comoponent (CO2, CH4....) seperately ('MULTI') or concatenated ('ONE') in C02 equivalent. 
-                 seas=True                       # Bool, to include or not a cosine&sine vector for the season
+                 seas=True                        # Bool, to include or not a cosine&sine vector for the season
     ):  
         with tf.device("/cpu:0"):
-            self.input2D, self.input1D, self.timeout = self.make(filepath, 
+            self.input2D, self.input1D, self.timeout, self.mean, self.sd = self.make(filepath,  
                                                                 filepath_ref,
                                                                 stand,
                                                                 var_list,
@@ -538,14 +617,14 @@ class Predictors:
              filepath_forc=None,opt_ghg=None,
              means=None,stds=None,seas=None):
         
-        DATASET = xr.open_dataset(filepath)
+        DATASET = xr.open_dataset(filepath, engine='netcdf4')
         # DATASET_wleap = self.domain.applyDom(DATASET_wleap)
 
         # DATASET = DATASET_wleap.sel(time=~((DATASET_wleap.time.dt.month==2) & (DATASET_wleap.time.dt.day==29)))
         # del DATASET_wleap
 
         #Do the same thing for the reference dataset 
-        DATASET_ref = xr.open_dataset(filepath_ref)
+        DATASET_ref = xr.open_dataset(filepath_ref, engine='netcdf4')
         # DATASET_ref_wleap = self.domain.applyDom(DATASET_ref_wleap)
         
         # years=np.asarray([y for y in to_datetime(DATASET_ref['time'].values).year])
@@ -564,11 +643,33 @@ class Predictors:
         print(f"Shape of INPUT2D: {INPUT_2D.shape}")
         # MV: Normalization of 2D variables happens below in the "standardize" functions
         
+        mean=0
+        sd=0
+        if stand==0:
+           INPUT_2D_SDTZ = INPUT_2D
+           print(f"stand0")
         if stand==1:
            INPUT_2D_SDTZ = standardize(INPUT_2D, "INPUT_2D")
-           print(f'shape of ndata: {INPUT_2D_SDTZ.shape}')
+           # print(f'shape of ndata: {INPUT_2D_SDTZ.shape}')
+           print(f"stand1")
         elif stand==2:
            INPUT_2D_SDTZ = standardize2(INPUT_2D,REF_ARRAY, "INPUT_2D")
+           print(f"stand2")
+        elif stand==3:            
+           # Same as stand=1 but provides mean and sd outputs
+
+           mean = np.nanmean(INPUT_2D,axis=(1,2), keepdims=True)            
+           sd = np.nanstd(INPUT_2D,axis=(1,2), keepdims=True)            
+           INPUT_2D_SDTZ = standardize(INPUT_2D, "INPUT_2D")           
+           # INPUT_2D_SDTZ = INPUT_2D
+           print(f"stand3")
+        elif stand==4:            
+           # Same as stand=2 but provides mean and sd outputs
+
+           mean = np.nanmean(REF_ARRAY,axis=(0,1,2), keepdims=True)            
+           sd = np.nanstd(INPUT_2D,axis=(0,1,2), keepdims=True)            
+           INPUT_2D_SDTZ = standardize2(INPUT_2D,REF_ARRAY, "INPUT_2D")
+           print(f"stand4")
 
         if aero_ext:
             aero_dataset= xr.open_dataset(filepath_aero)
@@ -636,7 +737,7 @@ class Predictors:
         timeout = DATASET.time
 
         DATASET.close()
-        return INPUT_2D_ARRAY,INPUT_1D_ARRAY,timeout
+        return INPUT_2D_ARRAY,INPUT_1D_ARRAY,timeout,mean,sd
       
 
 
@@ -654,20 +755,22 @@ class Target:
             ds = xr.open_dataset(filepath)
             grid=ds
         self.target = ds[target_var]
-        # self.lat = grid['lat']   
-        # self.lon = grid['lon'] 
-        self.rlat = grid['rlat']
-        self.rlon = grid['rlon']
+        self.lat = grid['lat']   
+        self.lon = grid['lon'] 
+
+        # self.rlat = grid['rlat']
+        # self.rlon = grid['rlon']
         ds.close()
 
 
 class Grid:
     def __init__(self,filepath=None):
         ds = xr.open_dataset(filepath)
-        # self.lat = ds['lat']   
-        # self.lon = ds['lon'] 
-        self.rlat = ds['rlat']
-        self.rlon = ds['rlon']
+        self.lat = ds['lat']   
+        self.lon = ds['lon'] 
+
+        # self.rlat = ds['rlat']
+        # self.rlon = ds['rlon']
         ds.close()
 
 

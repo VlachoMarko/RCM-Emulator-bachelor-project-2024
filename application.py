@@ -21,83 +21,99 @@ from datetime import date
 launch_gpu(0)
 
 
-dir_cm6='/cnrm/mosca/USERS/dourya/NO_SAVE/DATA/CNRM-CM6/'
+var0_nosfc1 = [ 'precip', 'rh0500', 'rh0700', 'rh0850',
+                't0700', 't0850',
+                'u0700', 'u0850',
+                'v0700', 'v0850',
+                'z0700']
 
-var0_nosfc1 = ['zg850','zg700','zg500',
-           'ta850','ta700','ta500',
-           'hus850','hus700','hus500',
-           'ua850','ua700','ua500',
-           'va850','va700','va500']
-
-filename='tas_ALPX-12_CNRM-CM6_historical_r15i1p1f2_CNRM_CNRM-ALADIN63-emul-CNRM-UNET11-tP1_v1-r1_day_19500101-20141231.nc'
-
+## The idea is to create 1 object predictor for each simulation to put in the training set
+filename='result18-t2mtarget-upvars+precipinput-remapped-1950-2099.nc'
 
 namelist_out = UserDict({ 
-    'target_var':'tas',
-    'domain':'FRA', 
-    'domain_size':(20,16), 
-    'filepath_in':'path to file containing inputs to downscale', 
-    'filepath_ref':'same ref file as the one used for training', 
+    'target_var':'t2m',
+    'domain':'ST', 
+    'filepath_in': '/var/scratch/mvs446/1degree-upvars+precip-noheight-remapped-fullgreenland.KNMI-1950-2099.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc', 
+    'filepath_ref': '/var/scratch/mvs446/1degree-upvars+precip-noheight-remapped-fullgreenland.KNMI-1950-2099.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc',
+    'aero_ext':False,'aero_stdz':False,'aero_var':'aero',
+    'filepath_aero':'',
     'var_list' : var0_nosfc1, 
     'opt_ghg' : 'ONE', 
-    'filepath_forc' : 'path to correspong external forcings',
-    'filepath_grid' : 'path to output domain grid',
-    'filepath_model' : 'path to emulator trained'   ,
-    'filepath_aero':'path to corresponding aerosols file',
-    'aero_ext':True,'aero_stdz':True,'aero_var':'od550aer',
-    'filepath_out':'path to save the output file'+filename,
-    })
+    'filepath_forc' : '',
+    'filepath_grid' : '/var/scratch/mvs446/t2m.KNMI-1950-2099-remapped-noheight.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc',
+    'filepath_model' : '/var/scratch/mvs446/precip2d_try15.keras',
+    'filepath_target': '/var/scratch/mvs446/t2m.KNMI-1950-2099-remapped-noheight.FGRN11.BN_RACMO2.3p2_CESM2_FGRN11.DD.nc',
+    'filepath_out':'/var/scratch/mvs446/'+filename
+})
 
-### example of CMIP lookalike attributes
+
+
+# namelist_out = UserDict({ 
+#     'target_var':'tas',
+#     'domain':'FRA', 
+#     'domain_size':(20,16), 
+#     'filepath_in':'path to file containing inputs to downscale', 
+#     'filepath_ref':'same ref file as the one used for training', 
+#     'var_list' : var0_nosfc1, 
+#     'opt_ghg' : 'ONE', 
+#     'filepath_forc' : 'path to correspong external forcings',
+#     'filepath_grid' : 'path to output domain grid',
+#     'filepath_model' : 'path to emulator trained'   ,
+#     'filepath_aero':'path to corresponding aerosols file',
+#     'aero_ext':True,'aero_stdz':True,'aero_var':'od550aer',
+#     })
+
+# example of CMIP lookalike attributes
 attributes={
-    "Conventions" : 'CF-1.10',
-        "activity_id": 'emulation',
-        "contact": 'contact.aladin-cordex@meteo.fr',
-        "domain_id": 'ALPX-12',
-        "domain": 'EUR-11 CORDEX domain cropped to a domain centered on Alps.',
-        "driving_experiment":'Historical run with GCM forcing',
-        "driving_experiment_id":'historical',
-        "driving_institution_id":'CNRM-CERFACS',
-        "driving_source_id":'CNRM-CM6',
-        "driving_variant_label":'r15i1p1f',
-        "emulator":  'CNRM_UNET11, introduced in Doury et al, 2022, is based fully'\
-                        'convolutional neural network shaped from the UNeT base (Ronnenberg et al, 2015).'\
-                            'The network is  minimizing the mean squared error (mse) loss function.',
-        "emulator_id":'CNRM-UNET11',
-        "frequency": 'day',
-        "further_info_url":'',
-        "institution":'Centre National de Recherches Meteorologiques,CNRM, Toulouse, France',
-        "institution_id":"CNRM",
-        'mip_era':"CMIP6",
-        "native_resolution" : "0.11°",
-        "product":"emulator_output",
-        "project_id":"I4C",
-        "realm":"",
-        "source": "CNRM-UNET11 is trained here for the near surface temperature of CNRM-ALADIN63 RCM ",
-        "source_id":'ALADIN63-emul-CNRM-UNET11',
-        "source_type":'RCM_emulator',
-        "version_realization":'v1-r1',
-        "target_institution_id":'CNRM',
-        "target_source_id":'CNRM-ALADIN63',
-        "target_version_realization":'v1',
-        "tracking_id":'',
-        "training":'Trained using PP predictors from the CNRM ALADIN63 RCM nested into (CMI5) CNRM-CM5 for the period 1950-2100'\
-                    'combining the historical and rcp85 simulations. The emulator is trained in perfect model framework, implying'\
-                    'that predictors and predictands come from the same RCM simulation, predictors are coarsened to the GCM resolution'\
-                    '(150km) and a spatial smoothing is applied, following the protocol described in Doury et al, 2022. The preditors'\
-                    'include the geopotential altitude, the temperature, the specific humidity and the eastern and northern wind components'\
-                    'at 3 pressure levels (500, 700, 850 hpa). External forcings such as the GHG concentration, and the solar and ozone values'\
-                    'are also inputs.The predictor list and pre-processing is identical from the one described in Doury et al 2022,'\
-                        'except that we remove here the uas,vas and psl variables from predictors list.',
-        "training_id": 'tP1',
-        "variable_id":'tas',
-        "version_realization_info":'this is the 1st realization of the emulator CNRM-ALADIN63-emul-CNRM-UNET11-TP1 over ALPX-12 domain.',
-        "license":'',
-        "reference":"""Doury, A., Somot, S., Gadat, S. et al. Regional climate model emulator based on deep learning: 
-            concept and first evaluation of a novel hybrid downscaling approach. Clim Dyn 60, 1751–1779 (2023).
-            https://doi.org/10.1007/s00382-022-06343-9""",
-        "creation_date":date.today().strftime("%d/%m/%Y")
-        }
+#         "Conventions" : 'CF-1.10',
+#         "activity_id": 'emulation',
+#         "contact": 'contact.aladin-cordex@meteo.fr',
+#         "domain_id": 'ALPX-12',
+#         "domain": 'EUR-11 CORDEX domain cropped to a domain centered on Alps.',
+#         "driving_experiment":'Historical run with GCM forcing',
+#         "driving_experiment_id":'historical',
+#         "driving_institution_id":'CNRM-CERFACS',
+#         "driving_source_id":'CNRM-CM6',
+#         "driving_variant_label":'r15i1p1f',
+          "emulator":  'CNRM_UNET11, introduced in Doury et al, 2022, is based fully'\
+                         'convolutional neural network shaped from the UNeT base (Ronnenberg et al, 2015).'\
+                             'The network is  minimizing the mean squared error (mse) loss function.',
+          "emulator_id":'CNRM-UNET11',
+          "frequency": 'day',
+#         "further_info_url":'',
+#         "institution":'Centre National de Recherches Meteorologiques,CNRM, Toulouse, France',
+#         "institution_id":"CNRM",
+#         'mip_era':"CMIP6",
+          "native_resolution" : "0.10°",
+          "product":"emulator_output",
+#         "project_id":"I4C",
+#         "realm":"",
+#         "source": "CNRM-UNET11 is trained here for the near surface temperature of CNRM-ALADIN63 RCM ",
+#         "source_id":'ALADIN63-emul-CNRM-UNET11',
+#         "source_type":'RCM_emulator',
+#         "version_realization":'v1-r1',
+#         "target_institution_id":'CNRM',
+#         "target_source_id":'CNRM-ALADIN63',
+#         "target_version_realization":'v1',
+#         "tracking_id":'',
+          "training":'Trained using predictors from the RACMO2 RCM for the period 1960-1970'\
+                     'The emulator is trained in perfect model framework, implying'\
+                     'that predictors and predictands come from the same RCM simulation.'\
+                     'The predictors were downscaled to 100km (1.0°) resolution using nearest neighbour interpolation.'\
+                     'The predictors include precipitative flux, relative humidity, temperature, '\
+                     'geopotential height and eastern and northern wind components'\
+                     'at 2 pressure levels (700, 850 hpa) plus at 500 hpa for humidity.',
+	  "training_config": 'filters=64, LR=0.005, relu activation, max channels=512, without denormalising pred'\
+                             'validation loss=2.21, standardized pred input'\
+                             'nb_inputs=2',
+          "variable_id":'t2m',
+#         "version_realization_info":'this is the 1st realization of the emulator CNRM-ALADIN63-emul-CNRM-UNET11-TP1 over South Greenland.',
+#         "license":'',
+#          "reference":"""Doury, A., Somot, S., Gadat, S. et al. Regional climate model emulator based on deep learning: 
+#             concept and first evaluation of a novel hybrid downscaling approach. Clim Dyn 60, 1751–1779 (2023).
+#             https://doi.org/10.1007/s00382-022-06343-9""",
+          "creation_date":date.today().strftime("%d/%m/%Y")
+}
 
 
 for key in namelist_out: 
@@ -106,9 +122,10 @@ for key in namelist_out:
 
 listin_pred = []
 
-aninput_pred = Predictors(namelist_out.domain,namelist_out.domain_size,
+aninput_pred = Predictors(namelist_out.domain,
                 filepath=namelist_out.filepath_in,
                 filepath_ref=namelist_out.filepath_ref,
+                stand=3,
                 var_list=namelist_out.var_list,
                 filepath_forc=namelist_out.filepath_forc,
                 filepath_aero=namelist_out.filepath_aero,
@@ -117,11 +134,16 @@ aninput_pred = Predictors(namelist_out.domain,namelist_out.domain_size,
 
 listin_pred.append(aninput_pred)
 
-apred = Pred(namelist_out.domain, namelist_out.domain_size,
+targets = []
+targets.append(Target(namelist_out.target_var, filepath=namelist_out.filepath_target,filepath_grid=namelist_out.filepath_grid).target.values)  
+
+apred = Pred(namelist_out.domain,
               inputIn = listin_pred,
+              targetIn=targets,
               filepath_grid =namelist_out.filepath_grid,
               filepath_out=namelist_out.filepath_out,
               filepath_model=namelist_out.filepath_model,
+              target_var=namelist_out.target_var,
               attributes=attributes)
 
 print(f"apred is {apred.ds}")     
