@@ -1,7 +1,7 @@
 # RCM-Emulator
 
 
-This repository contains the main functions used to build the Emul-UNet used in Doury et al,2022 and 2024 (in review). 
+This repository contains the main functions used to build the Emul-UNet used in Doury et al,2022 and 2024.
 
 It is organised as follow : 
 
@@ -17,4 +17,5 @@ The X_EUC12_fullvar_smth3_aero......nc is an example of the shape of an input fi
 The GHG....csv is an example of external forcing file for RCP85. 
 
 Doury, A., Somot, S., Gadat, S. et al. Regional climate model emulator based on deep learning: concept and first evaluation of a novel hybrid downscaling approach. Clim Dyn (2022). https://doi.org/10.1007/s00382-022-06343-9
-# RCM-Emulator-bachelor-project-2024
+
+All .ssh files were used to pre-process the RACMO2 climate data. This is a snapshot of the state of the project was in when the bachelor project was finished in June 2024.
