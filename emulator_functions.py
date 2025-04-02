@@ -637,6 +637,7 @@ class Predictors:
             DATASET['tos']=xr.where(np.isnan(DATASET['tos']),DATASET['tos'].mean(dim=['lon','lat']),DATASET['tos'])
             DATASET_ref['tos']=xr.where(np.isnan(DATASET_ref['tos']),DATASET_ref['tos'].mean(dim=['lon','lat']),DATASET_ref['tos'])
         
+        # Rearranges 
         INPUT_2D=DATASET[var_list].to_array().values.transpose((1,2,3,0))
         REF_ARRAY=DATASET_ref[var_list].to_array().values.transpose((1,2,3,0))
         # del DATASET_ref_wleap        
